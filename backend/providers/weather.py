@@ -11,6 +11,7 @@ from core.http import request_json
 from core.numbers import is_finite_number
 from core.time import HOUR, ceil_hour, floor_hour
 from domain.risk import Weather
+from providers import met_norway
 
 URL = "https://api.open-meteo.com/v1/forecast"
 BATCH_SIZE = 100
@@ -20,6 +21,10 @@ MAX_WORKERS = 4
 MM_PER_INCH = 25.4
 CM_PER_INCH = 2.54
 VARIABLES = ("wind_speed_10m", "wind_gusts_10m", "rain", "snowfall")
+OPEN_METEO = "open-meteo"
+MET_NORWAY = "met-norway"
+COOLDOWN_KEY = "weather:open-meteo:cooldown"
+COOLDOWN_S = 10 * 60
 
 
 class WeatherRateLimited(UpstreamError):
@@ -39,9 +44,10 @@ def snap(point: LatLon, grid_deg: float = DEFAULT_GRID_DEG) -> LatLon:
 class HourlySeries:
     start: datetime
     wind_mph: list[float]
-    gust_mph: list[float]
+    gust_mph: list[float | None]
     rain_in_hr: list[float]
     snow_in_hr: list[float]
+    source: str = OPEN_METEO
 
     def covers(self, start: datetime, end: datetime) -> bool:
         return self.start <= start and self.start + HOUR * (len(self.wind_mph) - 1) >= end
@@ -75,15 +81,52 @@ def fetch_hourly(
             by_point[point] = hit
     misses = [p for p in unique if p not in by_point]
 
-    batches = [misses[i : i + BATCH_SIZE] for i in range(0, len(misses), BATCH_SIZE)]
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-        fetched = pool.map(lambda b: _fetch_batch(b, start_hour, end_hour), batches)
-        for point, series in zip(misses, (s for batch in fetched for s in batch), strict=True):
+    if misses:
+        for point, series in zip(misses, _fetch_misses(misses, start_hour, end_hour), strict=True):
             if not series.covers(start_hour, end_hour):
                 raise UpstreamError("weather")
             by_point[point] = series
-            cache.set(key(point), series, CACHE_TTL_S)
+            # MET series must not outlive the cooldown, or they mix with fresh Open-Meteo cells
+            ttl = COOLDOWN_S if series.source == MET_NORWAY else CACHE_TTL_S
+            cache.set(key(point), series, ttl)
     return [by_point[p] for p in snapped]
+
+
+def _fetch_misses(points: list[LatLon], start: datetime, end: datetime) -> list[HourlySeries]:
+    if not cache.get(COOLDOWN_KEY):
+        try:
+            return _fetch_open_meteo(points, start, end)
+        except WeatherRateLimited:
+            # Open-Meteo limits per IP, and free hosts share outbound IPs
+            cache.set(COOLDOWN_KEY, True, COOLDOWN_S)
+    return _fetch_met_norway(points, start, end)
+
+
+def _fetch_open_meteo(points: list[LatLon], start: datetime, end: datetime) -> list[HourlySeries]:
+    batches = [points[i : i + BATCH_SIZE] for i in range(0, len(points), BATCH_SIZE)]
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+        fetched = pool.map(lambda b: _fetch_batch(b, start, end), batches)
+        return [series for batch in fetched for series in batch]
+
+
+def _fetch_met_norway(points: list[LatLon], start: datetime, end: datetime) -> list[HourlySeries]:
+    try:
+        fetched = met_norway.fetch_hourly(points, start, end)
+    except UpstreamError as exc:
+        if exc.upstream_status == 429:
+            raise WeatherRateLimited(exc.upstream_body) from exc
+        raise
+    return [
+        HourlySeries(
+            start=m.start,
+            wind_mph=m.wind_mph,
+            gust_mph=[None] * len(m.wind_mph),
+            rain_in_hr=m.rain_in_hr,
+            snow_in_hr=m.snow_in_hr,
+            source=MET_NORWAY,
+        )
+        for m in fetched
+    ]
 
 
 def _fetch_batch(batch: list[LatLon], start: datetime, end: datetime) -> list[HourlySeries]:

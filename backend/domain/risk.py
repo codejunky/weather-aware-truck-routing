@@ -18,13 +18,15 @@ class RiskLevel(IntEnum):
 @dataclass(frozen=True, slots=True)
 class Weather:
     wind_mph: float
-    gust_mph: float
+    gust_mph: float | None
     rain_in_hr: float
     snow_in_hr: float
 
     def __post_init__(self):
         for name in ("wind_mph", "gust_mph", "rain_in_hr", "snow_in_hr"):
             value = getattr(self, name)
+            if name == "gust_mph" and value is None:
+                continue
             if not isfinite(value) or value < 0:
                 raise ValueError(f"{name} must be a finite number >= 0, got {value}")
 

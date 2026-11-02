@@ -19,6 +19,10 @@ SAME_PLACE_MI = 0.1
 GRID_STEPS = (weather.DEFAULT_GRID_DEG, 0.4, 0.5)
 MAX_WEATHER_LOCATIONS = 450
 ALL_BLOCKED_NOTICE = "Every route crosses No Travel conditions. Consider delaying departure."
+MET_NORWAY_NOTICE = (
+    "Open-Meteo is rate-limiting this server, so forecasts come from MET Norway (met.no). "
+    "Snowfall is estimated from temperature and gusts aren't available."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +164,8 @@ def plan_trip(request: TripRequest) -> TripPlan:
         request.departure_at + max(HEATMAP_HOURS * HOUR, longest),
         grid_deg,
     )
+    if any(s.source == weather.MET_NORWAY for s in series.values()):
+        notices = [*notices, MET_NORWAY_NOTICE]
 
     scored = {r.id: _score(samples[r.id], series, request, grid_deg) for r in routes}
     planned = _rank_routes(routes, scored, request.departure_at)

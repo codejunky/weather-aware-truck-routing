@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from core.time import HOUR, ceil_hour, floor_hour
 from domain.ranking import RouteRisk
 from domain.sampling import TrackPoint
 from providers.routing import Route
-from providers.weather import HourlySeries, WeatherRateLimited
+from providers.weather import MET_NORWAY, HourlySeries, WeatherRateLimited
 from trips import services
 from trips.mappers import TripPlanMapper
 from trips.views import TripPlanView
@@ -455,3 +456,22 @@ def test_level_miles_never_round_away_exposure():
     assert mapped["severe_mi"] == 0.0
     assert mapped["high_mi"] == 0.2
     assert mapped["low_mi"] == 499.8
+
+
+def test_met_norway_forecasts_add_a_notice_and_null_gusts(providers, monkeypatch):
+    def met_weather(points, start, end, *, grid_deg):
+        hours = int((end - start) / HOUR) + 2
+        return [
+            replace(s, gust_mph=[None] * hours, source=MET_NORWAY)
+            for s in (series(start, hours) for _ in points)
+        ]
+
+    monkeypatch.setattr(services, "fetch_hourly", met_weather)
+    plan = post(body()).json()
+    assert services.MET_NORWAY_NOTICE in plan["notices"]
+    checkpoint = plan["routes"][0]["checkpoints"][0]
+    assert checkpoint["weather"]["gust_mph"] is None
+
+
+def test_open_meteo_forecasts_add_no_met_norway_notice(providers):
+    assert services.MET_NORWAY_NOTICE not in post(body()).json()["notices"]

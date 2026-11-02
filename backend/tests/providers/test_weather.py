@@ -1,13 +1,23 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
 import pytest
 import respx
+from django.core.cache import cache
 
 from core.errors import UpstreamError
-from providers.weather import HourlySeries, WeatherRateLimited, fetch_hourly, snap
+from providers.met_norway import URL as MET_URL
+from providers.weather import (
+    COOLDOWN_KEY,
+    COOLDOWN_S,
+    MET_NORWAY,
+    HourlySeries,
+    WeatherRateLimited,
+    fetch_hourly,
+    snap,
+)
 
 URL = "https://api.open-meteo.com/v1/forecast"
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "open_meteo_3pts.json"
@@ -247,12 +257,13 @@ def test_series_starting_late_raises_upstream_error():
             fetch_hourly([(39.74, -104.99)], early, START)
 
 
-def test_rate_limit_gets_its_own_code(monkeypatch):
+def test_rate_limit_gets_its_own_code_when_both_providers_refuse(monkeypatch):
     from core import http
 
     monkeypatch.setattr(http, "RETRY_DELAY_S", 0)
     with respx.mock:
         respx.get(URL).respond(429, json={"reason": "Too many requests"})
+        respx.get(MET_URL).respond(429)
         with pytest.raises(WeatherRateLimited) as exc_info:
             fetch_hourly([(39.74, -104.99)], START, START)
     error = exc_info.value
@@ -274,3 +285,86 @@ def test_grid_step_is_configurable_and_part_of_the_cache_key():
     assert fine[0].wind_mph[0] == 39.75
     assert coarse[0].wind_mph[0] == 39.5
     assert snap((39.74, -104.99), 0.5) == (39.5, -105.0)
+
+
+def met_body(hours=4):
+    entries = [
+        {
+            "time": (START + timedelta(hours=h)).isoformat().replace("+00:00", "Z"),
+            "data": {
+                "instant": {"details": {"wind_speed": 10.0, "air_temperature": 5.0}},
+                "next_1_hours": {"details": {"precipitation_amount": 0.0}},
+            },
+        }
+        for h in range(hours)
+    ]
+    return {"properties": {"timeseries": entries}}
+
+
+def test_open_meteo_rate_limit_falls_back_to_met_norway(monkeypatch):
+    from core import http
+
+    monkeypatch.setattr(http, "RETRY_DELAY_S", 0)
+    with respx.mock:
+        respx.get(URL).respond(429)
+        respx.get(MET_URL).respond(json=met_body())
+        [result] = fetch_hourly([(39.74, -104.99)], START, START + timedelta(hours=1))
+    assert result.source == MET_NORWAY
+    assert result.gust_mph == [None, None]
+    assert result.at(START).gust_mph is None
+    assert result.wind_mph[0] == pytest.approx(22.37, abs=0.01)
+
+
+def test_open_meteo_is_skipped_for_a_while_after_a_rate_limit(monkeypatch):
+    from core import http
+
+    monkeypatch.setattr(http, "RETRY_DELAY_S", 0)
+    with respx.mock:
+        open_meteo = respx.get(URL).respond(429)
+        respx.get(MET_URL).respond(json=met_body())
+        fetch_hourly([(39.74, -104.99)], START, START)
+        calls = open_meteo.call_count
+        fetch_hourly([(35.0, -100.0)], START, START)
+    assert open_meteo.call_count == calls
+    assert cache.get(COOLDOWN_KEY)
+
+
+def test_other_open_meteo_errors_do_not_fall_back():
+    with respx.mock:
+        respx.get(URL).respond(400, json={"reason": "bad request"})
+        met = respx.get(MET_URL).respond(json=met_body())
+        with pytest.raises(UpstreamError):
+            fetch_hourly([(39.74, -104.99)], START, START)
+    assert met.call_count == 0
+
+
+def test_met_norway_failure_after_open_meteo_429_is_a_plain_outage(monkeypatch):
+    from core import http
+
+    monkeypatch.setattr(http, "RETRY_DELAY_S", 0)
+    with respx.mock:
+        respx.get(URL).respond(429)
+        respx.get(MET_URL).respond(503)
+        with pytest.raises(UpstreamError) as exc_info:
+            fetch_hourly([(39.74, -104.99)], START, START)
+    assert not isinstance(exc_info.value, WeatherRateLimited)
+
+
+def test_met_norway_series_expire_with_the_cooldown(monkeypatch):
+    from core import http
+
+    monkeypatch.setattr(http, "RETRY_DELAY_S", 0)
+    ttls = {}
+    real_set = cache.set
+
+    def spy(key, value, timeout=None):
+        ttls[key] = timeout
+        real_set(key, value, timeout)
+
+    monkeypatch.setattr(cache, "set", spy)
+    with respx.mock:
+        respx.get(URL).respond(429)
+        respx.get(MET_URL).respond(json=met_body())
+        fetch_hourly([(39.74, -104.99)], START, START)
+    [series_key] = [k for k in ttls if k.startswith("weather:0.25")]
+    assert ttls[series_key] == COOLDOWN_S

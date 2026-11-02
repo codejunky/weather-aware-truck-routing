@@ -2,7 +2,7 @@ import ScaleIcon from '@mui/icons-material/ScaleOutlined'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import { RiskChip } from '@/components/RiskChip'
-import { formatEta } from '@/lib/format'
+import { formatEta, formatWind } from '@/lib/format'
 import type { CheckpointDatum } from './layers'
 
 export function CheckpointTooltipContent({ datum }: { datum: CheckpointDatum }) {
@@ -13,7 +13,7 @@ export function CheckpointTooltipContent({ datum }: { datum: CheckpointDatum }) 
     {
       name: 'Wind',
       level: cp.factors.wind,
-      value: `${weather.wind_mph.toFixed(0)} mph, gusts ${weather.gust_mph.toFixed(0)}`,
+      value: formatWind(weather.wind_mph, weather.gust_mph),
     },
     { name: 'Rain', level: cp.factors.rain, value: `${weather.rain_in_hr.toFixed(2)} in/hr` },
     { name: 'Snow', level: cp.factors.snow, value: `${weather.snow_in_hr.toFixed(2)} in/hr` },

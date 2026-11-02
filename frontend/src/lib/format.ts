@@ -11,6 +11,11 @@ export function formatMiles(miles: number): string {
   return `${milesFormatter.format(miles)} mi`
 }
 
+export function formatWind(windMph: number, gustMph: number | null): string {
+  const gusts = gustMph === null ? 'n/a' : gustMph.toFixed(0)
+  return `${windMph.toFixed(0)} mph, gusts ${gusts}`
+}
+
 export function formatDuration(seconds: number): string {
   const totalMinutes = Math.round(seconds / 60)
   const hours = Math.floor(totalMinutes / 60)

@@ -71,7 +71,7 @@ class TripPlanMapper:
             "load_adjusted": assessment.load_adjusted,
             "weather": {
                 "wind_mph": round(weather.wind_mph, 1),
-                "gust_mph": round(weather.gust_mph, 1),
+                "gust_mph": None if weather.gust_mph is None else round(weather.gust_mph, 1),
                 "rain_in_hr": round(weather.rain_in_hr, 2),
                 "snow_in_hr": round(weather.snow_in_hr, 2),
             },

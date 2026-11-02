@@ -45,7 +45,7 @@ Free Render services sleep after 15 minutes without traffic and take about a min
 
 1. Place inputs call `GET /api/geocode?q=` (Photon, debounced, cached).
 2. **Plan routes** sends one `POST /api/trips/plan` with origin, destination, departure, load and sample interval.
-3. The backend fetches routes, samples checkpoints, makes one batched Open-Meteo call for checkpoints and heatmap cells, scores and ranks the routes, and returns everything in a single JSON response. That includes all 49 heatmap hours.
+3. The backend fetches routes, samples checkpoints and gets the forecast for every checkpoint and heatmap cell in one batched Open-Meteo call (MET Norway if Open-Meteo refuses). It scores and ranks the routes and returns everything, all 49 heatmap hours included, in a single JSON response.
 4. The frontend validates the response with zod, renders the route cards, and draws the map layers with deck.gl over MapLibre (CARTO basemap). The slider and metric toggle never call the API again.
 
 Errors share one shape everywhere: `{"code": "upstream.weather_unavailable", "detail": "...", "fields"?: {...}}`. Field errors show inline on the form. Upstream 5xx and 429 errors get a Retry button.
@@ -58,6 +58,7 @@ Errors share one shape everywhere: `{"code": "upstream.weather_unavailable", "de
 | | OSRM demo server | Fallback and top-up. Valhalla's public server rejects trips longer than roughly 1,500 km (930 mi) in a straight line, and some trips get fewer than 3 distinct alternates. |
 | | OSRM via-point detours | When fewer than 3 distinct routes come back, the backend asks OSRM for routes through points offset ±12% perpendicular to the midpoint. It keeps a detour only if it is at most 35% longer than the original route. |
 | Weather | Open-Meteo hourly forecast | Free, keyless, batches many locations per call, and has wind, gusts, rain and snowfall by the hour. |
+| | MET Norway Locationforecast | Fallback when Open-Meteo returns 429. Open-Meteo limits per IP, and free hosts like Render share their outbound IPs, so the deployed backend often hits limits other apps used up. |
 | Geocoding | Photon (komoot) | Free, keyless, OSM-based autocomplete. |
 
 All upstream URLs are fixed constants. User input only ever goes into query parameters or the JSON body.
@@ -116,35 +117,41 @@ When I measured it, a scrub step took about 10 ms at p95 and sent no `/api` requ
 
 ## Decisions and trade-offs
 
-**Risk and ranking**
-- Wind tiers use sustained wind, not gusts. Gusts are shown but not scored.
-- No Travel ranks above the spec's first criterion, and routes with any No Travel miles are flagged `blocked`.
-- Each checkpoint owns the miles between the midpoints with its neighbours, so tier miles add up to the route length.
+### Risk and ranking
+
+- Routes with any No Travel miles are flagged `blocked`, and the card says so.
 - Weather is read at the ceiling hour of the ETA. Open-Meteo's precipitation is the total for the hour *ending* at each timestamp.
 - Missing or NaN weather fails the plan with a 502 instead of counting as Low.
 - `precip_in_hr` in the heatmap is rain plus snow ÷ 10 (water equivalent). It is used for display only, never for scoring.
 
-**Routing**
+### Routing
+
 - The public Valhalla server rejects trips longer than roughly 930 mi (1,500 km) measured in a straight line between the endpoints; Chicago → Denver is 1,016 road miles and still gets truck routes. Longer trips fall back to OSRM car routes, and the app says so in a notice and on each card ("Car route").
 - Synthetic via-point detours guarantee 3 options when the providers return fewer. They are real roads but not provider "alternatives".
 - Routes over 3,500 mi are dropped to bound the cost of a request. If none are left, the API returns 422 `routing.too_long`.
 - Route summaries name the roads that tell routes apart (each covering ≥25 mi, normalised like `I-80`), so the options don't all read "I-80".
 - The entered load weight is sent as Valhalla's truck `weight` with no tare added, rounded down to the nearest 1,000 lb (minimum 1,000) so the route cache key matches the value sent. The same entered weight drives the load rules for risk.
-- Two routes count as the same option when their distance and time are within 1% of each other, or when at least 90% of one route's points (every 10 mi) lie within a mile of the other. The faster one is kept, and the detour fill then looks for a genuinely different corridor.
+- Two routes count as the same option when their distance and time are within 1% of each other, or when at least 90% of one route's points (every 10 mi) lie within a mile of the other. The faster one is kept, and the detour fill then looks for a different corridor.
 
-**Weather budget**
+### Weather budget
+
 - Every weather lookup snaps to a shared grid that starts at 0.25° (about 17 mi, roughly GFS resolution). If a trip needs more than 450 locations, the grid coarsens to 0.4° and then 0.5°. The response reports `weather_grid_deg`, and a notice explains the coarser grid. This keeps a New York → Los Angeles trip at 10 mi spacing under Open-Meteo's free-tier per-minute quota.
-- Forecasts are cached for 30 minutes per grid cell. The plan endpoint is throttled to 6 requests per minute, and an upstream 429 maps to `upstream.weather_rate_limited`.
+- Forecasts are cached for 30 minutes per grid cell. The plan endpoint is throttled to 6 requests per minute.
+- When Open-Meteo answers 429, the backend leaves it alone for 10 minutes and asks MET Norway instead, and a notice on the plan says which provider answered. If MET Norway refuses too, the plan fails with `upstream.weather_rate_limited`.
+- MET Norway takes one location per request. I query it on a 0.5° grid (about 35 mi), which is roughly 140 requests for Chicago → Denver. Requests are paced to 15 per second, since met.no asks for under 20, and each location is cached for 30 minutes. The first fallback plan takes about 10 s; repeats come from the cache.
+- Its data needs some translation. Precipitation is shifted to the hour-ending convention, and past about 68 hours its 6-hour blocks are spread evenly across the hours. It doesn't split rain from snow, so any hour at or below 1 °C counts as snow at 10:1. Outside the Nordics it has no gusts at all, so `gust_mph` comes back `null` and the tooltip shows "n/a".
+- Its forecasts end about 9 days out. While the fallback is active, a very long trip leaving near the 7-day limit fails with `upstream.weather_unavailable`.
 
-**Map**
+### Map
+
 - deck.gl runs in overlaid mode, not interleaved. deck 9.4.1's interleaved mode crashes with MapLibre 6, so routes and the heatmap draw above basemap labels.
 - `HeatmapLayer` uses `weightsTextureSize: 512`, which removed roughly 250 ms GPU stalls on each hour change with no visible loss at the fitted zoom.
 - Hover shows tooltips for mouse users. Touch and pen taps pin the tooltip, which stays anchored to its coordinate as the map moves.
 
-**Tooling**
+### Tooling
+
 - TypeScript is pinned to 6.0.3 because typescript-eslint 8.72.1's peer range doesn't accept 7.x yet.
 - CORS is off. The Vite proxy serves `/api` in development, so hosting the frontend on another origin would need it back.
-
 
 ## Testing
 
@@ -165,8 +172,8 @@ npm test
 npm run lint && npm run build && npm run format:check
 ```
 
-- Backend, 249 pytest tests: risk tiers at every boundary, load overrides, sampling and segment miles, ETA lookup, ranking order and reasons, corridor and grid selection, and the provider parsers and fallbacks (Valhalla 154 → OSRM, detours, geometry-based duplicate routes, malformed and 429 responses) against recorded fixtures with `respx`. Also the plan endpoint's validation, error shapes and throttling, with providers stubbed out.
-- Frontend, 84 Vitest + Testing Library tests: form validation and the request payload, inline 400 errors (including mixed field and non-field errors), retry on 5xx, route cards, tooltip state (hover vs tap vs pen), heatmap grid building, slider playback, and formatting. A contract test parses `backend/tests/fixtures/plan_live.json`, a recorded live backend response, with the frontend's zod schema and fails on any field the schema doesn't know about.
+- Backend, 279 pytest tests: risk tiers at every boundary, load overrides, sampling and segment miles, ETA lookup, ranking order and reasons, corridor and grid selection, and the provider parsers and fallbacks against recorded fixtures with `respx`. The fallbacks covered are Valhalla 154 → OSRM, detours, geometry-based duplicate routes, Open-Meteo 429 → MET Norway (hour alignment, 6-hour blocks, snow estimate, pacing), and malformed or rate-limited responses. Also the plan endpoint's validation, error shapes and throttling, with providers stubbed out.
+- Frontend, 86 Vitest + Testing Library tests: form validation and the request payload, inline 400 errors (including mixed field and non-field errors), retry on 5xx, route cards, tooltip state (hover vs tap vs pen), heatmap grid building, slider playback, and formatting. A contract test parses `backend/tests/fixtures/plan_live.json`, a recorded live backend response, with the frontend's zod schema and fails on any field the schema doesn't know about.
 
 ## Project layout
 
@@ -175,7 +182,7 @@ backend/
   config/       settings, urls
   core/         error shape, HTTP client, geo + time helpers
   domain/       risk rules, sampling, corridor, ranking (pure functions)
-  providers/    Valhalla/OSRM routing, Open-Meteo, Photon
+  providers/    Valhalla/OSRM routing, Open-Meteo + MET Norway, Photon
   trips/        plan endpoint: serializer, service, heatmap, mapper
   geocoding/    geocode endpoint
   tests/        pytest suite + recorded fixtures

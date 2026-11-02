@@ -21,7 +21,7 @@ const CheckpointSchema = z.object({
   load_adjusted: z.boolean(),
   weather: z.object({
     wind_mph: z.number(),
-    gust_mph: z.number(),
+    gust_mph: z.number().nullable(),
     rain_in_hr: z.number(),
     snow_in_hr: z.number(),
   }),

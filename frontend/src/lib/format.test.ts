@@ -5,7 +5,18 @@ import {
   formatForecastHour,
   formatForecastHourParts,
   formatMiles,
+  formatWind,
 } from './format'
+
+describe('formatWind', () => {
+  it('shows gusts when the forecast has them', () => {
+    expect(formatWind(31.6, 44.2)).toBe('32 mph, gusts 44')
+  })
+
+  it('marks gusts as unavailable when the forecast lacks them', () => {
+    expect(formatWind(31.6, null)).toBe('32 mph, gusts n/a')
+  })
+})
 
 describe('formatDuration', () => {
   it('formats hours and minutes', () => {
