@@ -2,12 +2,15 @@ import Box from '@mui/material/Box'
 import Divider from '@mui/material/Divider'
 import Typography from '@mui/material/Typography'
 import useMediaQuery from '@mui/material/useMediaQuery'
-import { useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useMemo, useRef, useState } from 'react'
 import { usePlanTrip } from '@/api/hooks'
 import type { TripRequest } from '@/api/schemas'
+import { MapFallback } from '@/components/MapFallback'
 import { TripResults } from '@/features/routes/TripResults'
 import { TripForm } from '@/features/trip-form/TripForm'
 import { fieldErrorsFromServer } from '@/features/trip-form/validate'
+
+const TripMap = lazy(() => import('@/features/map/TripMap').then((m) => ({ default: m.TripMap })))
 
 const MOBILE_MAP_HEIGHT = '45vh'
 
@@ -85,6 +88,29 @@ export default function App() {
             onSelectRoute={setSelectedRouteId}
           />
         </Box>
+      </Box>
+      <Box
+        component="section"
+        aria-label="Map"
+        sx={{
+          order: { xs: 0, md: 1 },
+          flex: { md: 1 },
+          position: { xs: 'sticky', md: 'relative' },
+          top: 0,
+          zIndex: 1,
+          height: { xs: MOBILE_MAP_HEIGHT, md: 'auto' },
+          flexShrink: 0,
+          borderBottom: { xs: 1, md: 0 },
+          borderColor: 'divider',
+        }}
+      >
+        <Suspense fallback={<MapFallback />}>
+          <TripMap
+            plan={plan}
+            selectedRouteId={selectedRouteId}
+            onSelectRoute={setSelectedRouteId}
+          />
+        </Suspense>
       </Box>
     </Box>
   )
