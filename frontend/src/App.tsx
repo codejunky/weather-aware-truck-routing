@@ -58,6 +58,7 @@ export default function App() {
       <Box
         component="main"
         sx={{
+          position: 'relative',
           order: { xs: 1, md: 0 },
           width: { md: 400 },
           flexShrink: 0,
