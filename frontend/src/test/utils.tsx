@@ -40,8 +40,18 @@ export const PLACES = {
   denver: { label: 'Denver, CO', lat: 39.7392, lon: -104.9903 },
 }
 
+export const isGeocodeUrl = (url: string) => url.startsWith('https://photon.komoot.io/')
+
 export function geocodeResponse(url: string) {
-  const q = new URL(url, 'http://localhost').searchParams.get('q')?.toLowerCase() ?? ''
-  const results = Object.values(PLACES).filter((p) => p.label.toLowerCase().startsWith(q))
-  return jsonResponse(200, { results })
+  const q = new URL(url).searchParams.get('q')?.toLowerCase() ?? ''
+  const features = Object.values(PLACES)
+    .filter((p) => p.label.toLowerCase().startsWith(q))
+    .map((p) => {
+      const [name, state] = p.label.split(', ')
+      return {
+        geometry: { coordinates: [p.lon, p.lat] },
+        properties: { name, state, countrycode: 'US' },
+      }
+    })
+  return jsonResponse(200, { features })
 }

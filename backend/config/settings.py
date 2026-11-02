@@ -21,7 +21,6 @@ if render_host := env("RENDER_EXTERNAL_HOSTNAME", default=""):
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "rest_framework",
-    "geocoding",
     "trips",
 ]
 
@@ -50,7 +49,7 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [],
     "UNAUTHENTICATED_USER": None,
     "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.AnonRateThrottle"],
-    "DEFAULT_THROTTLE_RATES": {"anon": "30/min", "geocode": "60/min", "plan": "6/min"},
+    "DEFAULT_THROTTLE_RATES": {"anon": "30/min", "plan": "6/min"},
     "NUM_PROXIES": env.int("NUM_PROXIES", default=0),
     "EXCEPTION_HANDLER": "core.errors.exception_handler",
 }

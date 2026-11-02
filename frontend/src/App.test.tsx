@@ -5,6 +5,7 @@ import { TripRequestSchema } from '@/api/schemas'
 import fixture from '@/test/fixtures/plan.json'
 import {
   geocodeResponse,
+  isGeocodeUrl,
   jsonResponse,
   mockFetch,
   PLACES,
@@ -36,7 +37,7 @@ describe('trip planning', () => {
   it('TripForm submits contract payload', async () => {
     const user = userEvent.setup()
     const spy = mockFetch((url) =>
-      url.includes('/api/geocode') ? geocodeResponse(url) : jsonResponse(200, fixture),
+      isGeocodeUrl(url) ? geocodeResponse(url) : jsonResponse(200, fixture),
     )
     renderWithProviders(<App />)
 
@@ -63,7 +64,7 @@ describe('trip planning', () => {
   it('400 field error shown inline', async () => {
     const user = userEvent.setup()
     mockFetch((url) =>
-      url.includes('/api/geocode')
+      isGeocodeUrl(url)
         ? geocodeResponse(url)
         : jsonResponse(400, {
             code: 'validation.invalid',
@@ -84,7 +85,7 @@ describe('trip planning', () => {
     const user = userEvent.setup()
     let planAttempts = 0
     const spy = mockFetch((url) => {
-      if (url.includes('/api/geocode')) return geocodeResponse(url)
+      if (isGeocodeUrl(url)) return geocodeResponse(url)
       planAttempts += 1
       return planAttempts === 1
         ? jsonResponse(502, {
@@ -109,7 +110,7 @@ describe('trip planning', () => {
   it('maps nested server errors to their top-level field', async () => {
     const user = userEvent.setup()
     mockFetch((url) =>
-      url.includes('/api/geocode')
+      isGeocodeUrl(url)
         ? geocodeResponse(url)
         : jsonResponse(400, {
             code: 'validation.invalid',
@@ -129,7 +130,7 @@ describe('trip planning', () => {
   it('falls back to an alert when no form field matches', async () => {
     const user = userEvent.setup()
     mockFetch((url) =>
-      url.includes('/api/geocode')
+      isGeocodeUrl(url)
         ? geocodeResponse(url)
         : jsonResponse(400, {
             code: 'validation.invalid',
@@ -149,7 +150,7 @@ describe('trip planning', () => {
   it('shows field errors inline and the non-field message in the alert', async () => {
     const user = userEvent.setup()
     mockFetch((url) =>
-      url.includes('/api/geocode')
+      isGeocodeUrl(url)
         ? geocodeResponse(url)
         : jsonResponse(400, {
             code: 'validation.invalid',

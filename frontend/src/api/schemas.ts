@@ -9,8 +9,6 @@ const PlaceSchema = z.object({
   lon: z.number(),
 })
 
-export const GeocodeResponseSchema = z.object({ results: z.array(PlaceSchema) })
-
 const CheckpointSchema = z.object({
   mile: z.number(),
   lat: z.number(),

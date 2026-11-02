@@ -100,7 +100,7 @@ def test_retries_on_timeout():
 def test_does_not_retry_client_errors():
     route = respx.get(URL).mock(return_value=httpx.Response(404))
     with pytest.raises(UpstreamError):
-        request_json("GET", URL, service="geocoder")
+        request_json("GET", URL, service="routing")
     assert route.call_count == 1
 
 

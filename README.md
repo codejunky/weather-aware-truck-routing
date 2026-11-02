@@ -31,7 +31,7 @@ Open http://localhost:5173, pick Chicago and Denver, and press **Plan routes**.
 
 ## Deploy
 
-The backend runs on [Render](https://render.com) and the frontend on [Vercel](https://vercel.com), both on free plans. Vercel rewrites `/api/*` to Render, so the browser only ever talks to one origin and CORS stays off, just as with the Vite proxy in development.
+The backend runs on [Render](https://render.com) and the frontend on [Vercel](https://vercel.com), both on free plans. Vercel rewrites `/api/*` to Render, so every call to the app's own API stays on one origin and CORS can stay off. The Vite proxy does the same in development. Place search is the one exception: it goes from the browser straight to Photon, which allows any origin.
 
 Backend on Render: **New → Blueprint**, pick the repo, and Render reads `render.yaml`. It builds `backend/` with `uv sync`, runs gunicorn, generates `SECRET_KEY`, and adds its own hostname to `ALLOWED_HOSTS` through `RENDER_EXTERNAL_HOSTNAME`. The region is Frankfurt because the routing servers are in Germany, so the backend's several upstream calls per plan stay short.
 
@@ -43,7 +43,7 @@ Free Render services sleep after 15 minutes without traffic and take about a min
 
 ### Request flow
 
-1. Place inputs call `GET /api/geocode?q=` (Photon, debounced, cached).
+1. Place inputs call Photon straight from the browser (debounced, cached for 5 minutes, US results only).
 2. **Plan routes** sends one `POST /api/trips/plan` with origin, destination, departure, load and sample interval.
 3. The backend fetches routes, samples checkpoints and gets the forecast for every checkpoint and heatmap cell in one batched Open-Meteo call (MET Norway if Open-Meteo refuses). It scores and ranks the routes and returns everything, all 49 heatmap hours included, in a single JSON response.
 4. The frontend validates the response with zod, renders the route cards, and draws the map layers with deck.gl over MapLibre (CARTO basemap). The slider and metric toggle never call the API again.
@@ -59,13 +59,13 @@ Errors share one shape everywhere: `{"code": "upstream.weather_unavailable", "de
 | | OSRM via-point detours | When fewer than 3 distinct routes come back, the backend asks OSRM for routes through points offset ±12% perpendicular to the midpoint. It keeps a detour only if it is at most 35% longer than the original route. |
 | Weather | Open-Meteo hourly forecast | Free, keyless, batches many locations per call, and has wind, gusts, rain and snowfall by the hour. |
 | | MET Norway Locationforecast | Fallback when Open-Meteo returns 429. Open-Meteo limits per IP, and free hosts like Render share their outbound IPs, so the deployed backend often hits limits other apps used up. |
-| Geocoding | Photon (komoot) | Free, keyless, OSM-based autocomplete. |
+| Geocoding | Photon (komoot) | Free, keyless, OSM-based autocomplete. The browser calls it directly, so each search comes from the visitor's own IP. I first proxied it through the backend, and Photon throttled Render's shared outbound IP. |
 
-All upstream URLs are fixed constants. User input only ever goes into query parameters or the JSON body.
+All upstream base URLs are fixed constants, and no user-typed text reaches the backend's upstream calls. Origin and destination arrive as coordinates the serializer has already checked as numbers in range. OSRM takes them in the URL path; every other provider gets them as query parameters or JSON.
 
 ### Checkpoints at ETA
 
-Each route's geometry becomes a track of `(lat, lon, mile, seconds)` points. A checkpoint goes every 10, 25 or 50 mi (the user picks; 25 by default), plus one at the destination. Each checkpoint's ETA is the departure time plus the interpolated drive time to that mile, and it reads the forecast for that ETA, not for "now". Each checkpoint stands for the miles from the midpoint with its previous neighbour to the midpoint with its next one, so a route's per-tier miles add up to its length.
+Each route's geometry becomes a track of `(lat, lon, mile, seconds)` points. A checkpoint goes every 10, 25 or 50 mi (the user picks; 25 by default), plus one at the destination. Each checkpoint's ETA is the departure time plus the interpolated drive time to that mile, and it reads the forecast for that ETA, not for "now". Each checkpoint covers the miles from the midpoint with its previous neighbour to the midpoint with its next one, so a route's per-tier miles add up to its length.
 
 ### Risk rules
 
@@ -172,8 +172,8 @@ npm test
 npm run lint && npm run build && npm run format:check
 ```
 
-- Backend, 279 pytest tests: risk tiers at every boundary, load overrides, sampling and segment miles, ETA lookup, ranking order and reasons, corridor and grid selection, and the provider parsers and fallbacks against recorded fixtures with `respx`. The fallbacks covered are Valhalla 154 → OSRM, detours, geometry-based duplicate routes, Open-Meteo 429 → MET Norway (hour alignment, 6-hour blocks, snow estimate, pacing), and malformed or rate-limited responses. Also the plan endpoint's validation, error shapes and throttling, with providers stubbed out.
-- Frontend, 86 Vitest + Testing Library tests: form validation and the request payload, inline 400 errors (including mixed field and non-field errors), retry on 5xx, route cards, tooltip state (hover vs tap vs pen), heatmap grid building, slider playback, and formatting. A contract test parses `backend/tests/fixtures/plan_live.json`, a recorded live backend response, with the frontend's zod schema and fails on any field the schema doesn't know about.
+- Backend, 266 pytest tests: risk tiers at every boundary, load overrides, sampling and segment miles, ETA lookup, ranking order and reasons, corridor and grid selection, and the provider parsers and fallbacks against recorded fixtures with `respx`. The fallbacks covered are Valhalla 154 → OSRM, detours, geometry-based duplicate routes, Open-Meteo 429 → MET Norway (hour alignment, 6-hour blocks, snow estimate, pacing), and malformed or rate-limited responses. Also the plan endpoint's validation, error shapes and throttling, with providers stubbed out.
+- Frontend, 92 Vitest + Testing Library tests: form validation and the request payload, the Photon parser (US filter, labels, duplicates, bad coordinates), inline 400 errors (including mixed field and non-field errors), retry on 5xx, route cards, tooltip state (hover vs tap vs pen), heatmap grid building, slider playback, and formatting. A contract test parses `backend/tests/fixtures/plan_live.json`, a recorded live backend response, with the frontend's zod schema and fails on any field the schema doesn't know about.
 
 ## Project layout
 
@@ -182,12 +182,11 @@ backend/
   config/       settings, urls
   core/         error shape, HTTP client, geo + time helpers
   domain/       risk rules, sampling, corridor, ranking (pure functions)
-  providers/    Valhalla/OSRM routing, Open-Meteo + MET Norway, Photon
+  providers/    Valhalla/OSRM routing, Open-Meteo + MET Norway
   trips/        plan endpoint: serializer, service, heatmap, mapper
-  geocoding/    geocode endpoint
   tests/        pytest suite + recorded fixtures
 frontend/src/
-  api/          fetch client, zod schemas, React Query hooks
+  api/          fetch client, zod schemas, React Query hooks, Photon search
   features/
     trip-form/  form + validation
     routes/     results panel, route cards

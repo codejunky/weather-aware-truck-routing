@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { jsonResponse, mockFetch } from '@/test/utils'
 import { ApiError, getJson, postJson } from './client'
-import { geocodeUrl } from './hooks'
 
 const Schema = z.object({ ok: z.boolean() })
 
@@ -74,11 +73,5 @@ describe('api client', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(response)
     const error = await caught(getJson('/api/x', Schema))
     expect(error).toMatchObject({ name: 'AbortError' })
-  })
-
-  it('encodes the geocode query', () => {
-    expect(geocodeUrl('St. Louis, MO & 5th/Main')).toBe(
-      '/api/geocode?q=St.+Louis%2C+MO+%26+5th%2FMain',
-    )
   })
 })
