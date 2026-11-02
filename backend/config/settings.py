@@ -19,6 +19,7 @@ ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "rest_framework",
+    "geocoding",
 ]
 
 MIDDLEWARE = [

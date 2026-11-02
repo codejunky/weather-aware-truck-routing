@@ -4,6 +4,7 @@ from core.views import health
 
 api_urlpatterns = [
     path("health", health),
+    path("", include("geocoding.urls")),
 ]
 
 urlpatterns = [
