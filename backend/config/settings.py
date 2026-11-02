@@ -15,6 +15,8 @@ if not SECRET_KEY:
         raise ImproperlyConfigured("SECRET_KEY must be set when DEBUG is off")
     SECRET_KEY = "dev-only-insecure-key"
 ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])
+if render_host := env("RENDER_EXTERNAL_HOSTNAME", default=""):
+    ALLOWED_HOSTS.append(render_host)
 
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
