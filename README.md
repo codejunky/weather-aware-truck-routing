@@ -35,7 +35,7 @@ The backend runs on [Render](https://render.com) and the frontend on [Vercel](ht
 
 Backend on Render: **New → Blueprint**, pick the repo, and Render reads `render.yaml`. It builds `backend/` with `uv sync`, runs gunicorn, generates `SECRET_KEY`, and adds its own hostname to `ALLOWED_HOSTS` through `RENDER_EXTERNAL_HOSTNAME`. The region is Frankfurt because the routing servers are in Germany, so the backend's several upstream calls per plan stay short.
 
-Frontend on Vercel: import the repo with root directory `frontend`. Vite and Node 26 are detected automatically. If Render gives the service a hostname other than `spotter-backend.onrender.com`, update `frontend/vercel.json` to match.
+Frontend on Vercel: import the repo with root directory `frontend`. Vite and Node 26 are detected automatically. The rewrite in `frontend/vercel.json` points at this deployment's backend, `spotter-backend-toyq.onrender.com`. Render adds a random suffix to the service name, so a fresh deploy needs its own hostname there.
 
 Free Render services sleep after 15 minutes without traffic and take about a minute to wake. Open the backend URL once before sharing the app.
 
