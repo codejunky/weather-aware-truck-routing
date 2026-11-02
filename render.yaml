@@ -6,7 +6,7 @@ services:
     region: frankfurt
     rootDir: backend
     buildCommand: uv sync --frozen --no-dev
-    startCommand: uv run --no-sync gunicorn config.wsgi --bind 0.0.0.0:$PORT --workers 2 --timeout 60 --access-logfile -
+    startCommand: uv run --no-sync gunicorn config.wsgi --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 60 --access-logfile -
     envVars:
       - key: PYTHON_VERSION
         value: 3.15.0
